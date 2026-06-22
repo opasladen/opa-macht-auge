@@ -1,0 +1,6 @@
+runs/
+weights/
+datasets/raw/
+datasets/processed/
+.venv/
+__pycache__/

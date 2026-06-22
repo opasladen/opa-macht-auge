@@ -1,0 +1,1 @@
+# Migrationen werden per `just backend-makemigration "message"` generiert.

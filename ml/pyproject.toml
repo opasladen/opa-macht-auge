@@ -1,0 +1,71 @@
+[project]
+name = "opa-ml"
+version = "0.1.0"
+description = "Opa macht Auge - Computer-Vision Pipeline (Detector + Embedder)"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27.2",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "typer>=0.15.1",
+    "rich>=13.9.0",
+    "tqdm>=4.67.0",
+    "pillow>=11.0.0",
+    "numpy>=2.1.0",
+    "opencv-python-headless>=4.10.0.84",
+    "imagehash>=4.3.1",
+    "tenacity>=9.0.0",
+    "sqlalchemy>=2.0.36",
+    "psycopg[binary]>=3.2.3",
+    "pgvector>=0.3.6",
+]
+
+[dependency-groups]
+embed = [
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "transformers>=4.46.0",
+    "safetensors>=0.4.5",
+]
+export = [
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "transformers>=4.46.0",
+    "safetensors>=0.4.5",
+    "onnx>=1.17.0",
+    "onnxruntime>=1.20.0",
+]
+train = [
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "ultralytics>=8.3.0",
+    "transformers>=4.46.0",
+    "onnx>=1.17.0",
+    "onnxruntime>=1.20.0",
+    "tensorflow>=2.18.0",
+]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "dvc[s3]>=3.58.0",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

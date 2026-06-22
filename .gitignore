@@ -1,0 +1,82 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+*.swp
+*.swo
+
+# Secrets / Env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg
+
+# Dart / Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.lock.bak
+ios/Pods/
+ios/.symlinks/
+android/.gradle/
+android/local.properties
+android/captures/
+**/GeneratedPluginRegistrant.*
+
+# Node (falls Tooling spaeter)
+node_modules/
+
+# Datasets / Models (ueber DVC getrackt)
+ml/datasets/raw/
+ml/datasets/processed/
+ml/runs/
+ml/weights/
+ml/data/cardmarket/
+*.pt
+*.tflite
+# fp32-Modell und Backups bleiben lokal; in der App wird nur das INT8
+# eingecheckt (klein genug fuer normales Git, kein LFS noetig).
+app/assets/models/dinov2_small.onnx
+app/assets/models/*.bak
+ml/**/*.onnx
+!app/assets/models/dinov2_small_int8.onnx
+!app/assets/models/dinov2_small.preprocess.json
+
+# Docker
+*.pid
+
+# Logs
+*.log
+logs/
+
+# DVC
+/ml/.dvc/tmp
+/ml/.dvc/cache

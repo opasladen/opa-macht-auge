@@ -1,0 +1,40 @@
+name: opa-macht-auge
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: opa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-opa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opa_dev_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-opa_macht_auge}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-opa} -d ${POSTGRES_DB:-opa_macht_auge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: opa-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

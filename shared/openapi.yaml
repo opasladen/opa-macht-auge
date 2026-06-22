@@ -1,0 +1,191 @@
+openapi: 3.1.0
+info:
+  title: Opa macht Auge API
+  version: 0.1.0
+  description: >
+    Vertragsschnittstelle zwischen Flutter-Client und FastAPI-Backend.
+    Generierter Dart-Client liegt unter `app/lib/data/remote/generated/`.
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:8000
+    description: Local dev
+tags:
+  - name: health
+  - name: identify
+  - name: cards
+  - name: prices
+
+paths:
+  /api/v1/healthz:
+    get:
+      tags: [health]
+      operationId: liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /api/v1/readyz:
+    get:
+      tags: [health]
+      operationId: readiness
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /api/v1/identify:
+    post:
+      tags: [identify]
+      operationId: identifyCard
+      summary: Top-K-Match fuer ein Client-Embedding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentifyRequest"
+      responses:
+        "200":
+          description: Treffer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentifyResponse"
+        "501":
+          description: Not implemented (v0)
+
+  /api/v1/cards/{cardId}:
+    get:
+      tags: [cards]
+      operationId: getCard
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Card details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Card"
+        "404":
+          description: Nicht gefunden
+
+  /api/v1/prices/variants/{variantId}:
+    get:
+      tags: [prices]
+      operationId: getVariantPrices
+      parameters:
+        - name: variantId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Aktuelle Preise pro Quelle/Zustand
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceSnapshot"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready]
+
+    IdentifyRequest:
+      type: object
+      required: [embedding, model_version]
+      properties:
+        embedding:
+          type: array
+          minItems: 8
+          maxItems: 4096
+          items:
+            type: number
+            format: float
+        model_version:
+          type: string
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 5
+        game_slug:
+          type: string
+          default: pokemon
+
+    IdentifyMatch:
+      type: object
+      required: [card_id, similarity, name, set_code, number]
+      properties:
+        card_id: { type: string, format: uuid }
+        similarity: { type: number, format: float }
+        name: { type: string }
+        set_code: { type: string }
+        number: { type: string }
+
+    IdentifyResponse:
+      type: object
+      required: [matches]
+      properties:
+        matches:
+          type: array
+          items: { $ref: "#/components/schemas/IdentifyMatch" }
+
+    Card:
+      type: object
+      required: [id, set_code, number, name_localized]
+      properties:
+        id: { type: string, format: uuid }
+        set_code: { type: string }
+        number: { type: string }
+        name_localized:
+          type: object
+          additionalProperties: { type: string }
+        rarity: { type: string, nullable: true }
+        card_type: { type: string, nullable: true }
+        image_url_small: { type: string, nullable: true }
+        image_url_large: { type: string, nullable: true }
+
+    PriceSnapshot:
+      type: object
+      required: [source, condition, price_eur, fetched_at]
+      properties:
+        source:
+          type: string
+          enum: [cardmarket, ebay_sold]
+        condition:
+          type: string
+          enum: [M, NM, EX, GD, LP, PL, PO]
+        price_eur:
+          type: number
+          format: float
+        trend_7d_eur:
+          type: number
+          format: float
+          nullable: true
+        fetched_at:
+          type: string
+          format: date-time

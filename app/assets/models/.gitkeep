@@ -1,0 +1,3 @@
+// Platzhalter - die TFLite-Modelle (yolov8n_cards.tflite, embedder.tflite)
+// werden via CI in den Release-Build kopiert und sind hier per .gitignore
+// ausgeschlossen. Diese Datei haelt nur den Ordner im Git.

@@ -1,7 +1,7 @@
 name: opa_macht_auge
 description: "Opa macht Auge - Pokemon-Karten erkennen, katalogisieren, bewerten."
 publish_to: none
-version: 0.1.1+2
+version: 0.1.2+3
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -64,7 +64,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/models/dinov2_small_int8.onnx
+    - assets/models/dinov2_small.onnx
     - assets/models/dinov2_small.preprocess.json
     - assets/branding/
 
@@ -74,5 +74,5 @@ flutter_launcher_icons:
   image_path: assets/branding/opa_logo.png
   min_sdk_android: 21
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: assets/branding/opa_logo.png
+  adaptive_icon_foreground: assets/branding/opa_logo_adaptive.png
   remove_alpha_ios: false

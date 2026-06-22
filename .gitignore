@@ -65,12 +65,12 @@ ml/weights/
 ml/data/cardmarket/
 *.pt
 *.tflite
-# fp32-Modell und Backups bleiben lokal; in der App wird nur das INT8
-# eingecheckt (klein genug fuer normales Git, kein LFS noetig).
-app/assets/models/dinov2_small.onnx
+# Nicht ins Repo: INT8-Quantisierung (Mobile-ORT supportet QInt8 nicht),
+# Backup-Files und ML-Side-Outputs.
 app/assets/models/*.bak
+app/assets/models/dinov2_small_int8.onnx
 ml/**/*.onnx
-!app/assets/models/dinov2_small_int8.onnx
+!app/assets/models/dinov2_small.onnx
 !app/assets/models/dinov2_small.preprocess.json
 
 # Docker

@@ -14,7 +14,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 
 import 'preprocess.dart';
 
-const String _kModelAsset = 'assets/models/dinov2_small_int8.onnx';
+const String _kModelAsset = 'assets/models/dinov2_small.onnx';
 const String _kPreprocessAsset = 'assets/models/dinov2_small.preprocess.json';
 
 class EmbedderService {

@@ -90,6 +90,32 @@ class AppUpdater {
       print('[AppUpdater] DISABLED: kein GITHUB_RELEASE_TOKEN im Build.');
       return const UpdateStatusError('Kein Update-Token im Build');
     }
+    // Workaround: dart:io HttpClient hat auf manchen Android-Geraeten DNS-
+    // Probleme beim ersten Call. Vorab explizit aufloesen + bis zu 3x retry.
+    String? resolvedIp;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        final addrs = await InternetAddress.lookup(
+          'api.github.com',
+          type: InternetAddressType.IPv4,
+        ).timeout(const Duration(seconds: 5));
+        if (addrs.isNotEmpty) {
+          resolvedIp = addrs.first.address;
+          // ignore: avoid_print
+          print('[AppUpdater] DNS attempt $attempt -> $resolvedIp');
+          break;
+        }
+      } catch (e) {
+        // ignore: avoid_print
+        print('[AppUpdater] DNS attempt $attempt failed: $e');
+        if (attempt < 3) {
+          await Future<void>.delayed(Duration(seconds: attempt));
+        }
+      }
+    }
+    if (resolvedIp == null) {
+      return const UpdateStatusError('DNS api.github.com fehlgeschlagen (3x)');
+    }
     try {
       final info = await PackageInfo.fromPlatform();
       final currentVersion = info.version;

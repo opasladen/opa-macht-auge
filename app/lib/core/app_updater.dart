@@ -1,6 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logger/logger.dart';
 import 'package:open_filex/open_filex.dart';
@@ -64,11 +64,8 @@ class UpdateDownloadState {
 
 /// Service der GitHub-Releases pollt und APKs herunterlaedt.
 class AppUpdater {
-  AppUpdater({Dio? dio, Logger? logger})
-      : _dio = dio ?? Dio(),
-        _log = logger ?? Logger();
+  AppUpdater({Logger? logger}) : _log = logger ?? Logger();
 
-  final Dio _dio;
   final Logger _log;
 
   static const String _apiBase = 'https://api.github.com';
@@ -122,32 +119,88 @@ class AppUpdater {
       final url = '$_apiBase/repos/$_kRepoOwner/$_kRepoName/releases/latest';
       // ignore: avoid_print
       print('[AppUpdater] GET $url current=$currentVersion');
-      final resp = await _dio.get<Map<String, dynamic>>(
-        url,
-        options: Options(
-          headers: _authHeaders,
-          responseType: ResponseType.json,
-          validateStatus: (s) => s != null && s < 500,
-        ),
-      );
+      // dart:io HttpClient direkt nutzen (umgeht dio-internen DNS-Cache,
+      // der auf manchen Geraeten "Failed host lookup" wirft obwohl
+      // InternetAddress.lookup eben noch geklappt hat).
+      final pinnedIp = resolvedIp;
       // ignore: avoid_print
-      print('[AppUpdater] HTTP ${resp.statusCode}');
-      if (resp.statusCode == 401 || resp.statusCode == 403) {
+      print('[AppUpdater] SecureSocket.connect $pinnedIp:443 sni=api.github.com');
+      late final int statusCode;
+      late String responseBody;
+      SecureSocket? sock;
+      try {
+        final tcpSocket = await Socket.connect(
+          pinnedIp,
+          443,
+          timeout: const Duration(seconds: 15),
+        );
+        // ignore: avoid_print
+        print('[AppUpdater] TCP connected, upgrading TLS sni=api.github.com');
+        sock = await SecureSocket.secure(
+          tcpSocket,
+          host: 'api.github.com',
+          supportedProtocols: const ['http/1.1'],
+        );
+        // ignore: avoid_print
+        print('[AppUpdater] SSL connected, peerCert subject=${sock.peerCertificate?.subject}');
+        // Manuell HTTP/1.1 sprechen
+        final path = '/repos/$_kRepoOwner/$_kRepoName/releases/latest';
+        final reqLines = <String>[
+          'GET $path HTTP/1.1',
+          'Host: api.github.com',
+          'Accept: application/vnd.github+json',
+          'X-GitHub-Api-Version: 2022-11-28',
+          'Authorization: Bearer $_kGithubToken',
+          'User-Agent: opa-macht-auge/$_kRepoName',
+          'Connection: close',
+          '',
+          '',
+        ];
+        sock.add(utf8.encode(reqLines.join('\r\n')));
+        await sock.flush();
+        // ignore: avoid_print
+        print('[AppUpdater] request sent');
+        final bytes = await sock
+            .fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk))
+            .timeout(const Duration(seconds: 20));
+        final raw = utf8.decode(bytes, allowMalformed: true);
+        final headerEnd = raw.indexOf('\r\n\r\n');
+        if (headerEnd < 0) {
+          throw const FormatException('Keine HTTP-Header gefunden');
+        }
+        final headerBlock = raw.substring(0, headerEnd);
+        responseBody = raw.substring(headerEnd + 4);
+        final firstLine = headerBlock.split('\r\n').first;
+        // "HTTP/1.1 200 OK"
+        final parts = firstLine.split(' ');
+        statusCode = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+        // ignore: avoid_print
+        print('[AppUpdater] resp status=$statusCode bodyLen=${responseBody.length}');
+        // Falls chunked transfer-encoding: vereinfacht dechunken (best-effort)
+        if (headerBlock.toLowerCase().contains('transfer-encoding: chunked')) {
+          responseBody = _dechunk(responseBody);
+        }
+      } finally {
+        await sock?.close();
+      }
+      // ignore: avoid_print
+      print('[AppUpdater] HTTP $statusCode');
+      if (statusCode == 401 || statusCode == 403) {
         return UpdateStatusError(
-          'Token abgelehnt (HTTP ${resp.statusCode})',
+          'Token abgelehnt (HTTP $statusCode)',
         );
       }
-      if (resp.statusCode == 404) {
+      if (statusCode == 404) {
         return UpdateStatusError(
           'Kein Release gefunden (HTTP 404, Token-Scope?)',
         );
       }
-      if (resp.statusCode != 200 || resp.data == null) {
+      if (statusCode != 200 || responseBody.isEmpty) {
         return UpdateStatusError(
-          'GitHub-Release-Lookup fehlgeschlagen (HTTP ${resp.statusCode}).',
+          'GitHub-Release-Lookup fehlgeschlagen (HTTP $statusCode).',
         );
       }
-      final data = resp.data!;
+      final data = jsonDecode(responseBody) as Map<String, dynamic>;
       final tag = (data['tag_name'] as String?) ?? '';
       final latestVersion = tag.startsWith('v') ? tag.substring(1) : tag;
       // ignore: avoid_print
@@ -184,11 +237,6 @@ class AppUpdater {
         assetName: asset['name'] as String,
         assetSize: (asset['size'] as num).toInt(),
       );
-    } on DioException catch (e) {
-      // ignore: avoid_print
-      print('[AppUpdater] DioException: ${e.message}');
-      _log.e('AppUpdater check failed: ${e.message}');
-      return UpdateStatusError(e.message ?? 'Netzwerkfehler');
     } catch (e, st) {
       // ignore: avoid_print
       print('[AppUpdater] Exception: $e');
@@ -211,28 +259,19 @@ class AppUpdater {
         await outFile.delete();
       }
       _log.i('AppUpdater: download ${update.assetUrl} -> ${outFile.path}');
-      final controller = _ProgressBus();
-      final downloadFuture = _dio.download(
-        update.assetUrl,
-        outFile.path,
-        options: Options(
-          headers: {
-            ..._authHeaders,
-            // Asset-Download per API: Accept octet-stream loest 302 -> S3 aus
-            // und der dio folgt redirects automatisch.
-            'Accept': 'application/octet-stream',
-          },
-          followRedirects: true,
-          responseType: ResponseType.bytes,
-        ),
-        onReceiveProgress: (count, total) {
-          if (total > 0) {
-            controller.emit(count / total);
-          }
-        },
-      );
       yield const UpdateDownloadState(progress: 0);
-      await for (final p in controller.stream(downloadFuture)) {
+      // Manuelle TLS+HTTP-Implementation (siehe check() Doku), folgt
+      // 3xx-Redirects (GitHub redirected zu objects.githubusercontent.com).
+      final progressStream = _downloadStreamed(
+        Uri.parse(update.assetUrl),
+        {
+          ..._authHeaders,
+          // Asset-Download per API: Accept octet-stream loest 302 -> S3 aus.
+          'Accept': 'application/octet-stream',
+        },
+        outFile,
+      );
+      await for (final p in progressStream) {
         yield UpdateDownloadState(progress: p);
       }
       yield const UpdateDownloadState(progress: 1.0);
@@ -246,8 +285,176 @@ class AppUpdater {
       }
     } catch (e, st) {
       _log.e('AppUpdater downloadAndInstall failed', error: e, stackTrace: st);
+      // ignore: avoid_print
+      print('[AppUpdater] download failed: $e');
       yield UpdateDownloadState(error: e.toString());
     }
+  }
+
+  /// Manueller HTTPS-Download mit Redirect-Support und Progress-Events.
+  /// Emittiert Werte 0.0..1.0. Wirft bei Fehler.
+  Stream<double> _downloadStreamed(
+    Uri uri,
+    Map<String, String> headers,
+    File outFile, {
+    int redirectsLeft = 5,
+  }) async* {
+    // ignore: avoid_print
+    print('[AppUpdater] download GET ${uri.host}${uri.path}');
+    final addrs = await InternetAddress.lookup(
+      uri.host,
+      type: InternetAddressType.IPv4,
+    ).timeout(const Duration(seconds: 10));
+    if (addrs.isEmpty) {
+      throw SocketException('DNS ${uri.host} ohne Antwort');
+    }
+    final ip = addrs.first.address;
+    final port = uri.port == 0 ? 443 : uri.port;
+    final tcp = await Socket.connect(
+      ip,
+      port,
+      timeout: const Duration(seconds: 15),
+    );
+    final tls = await SecureSocket.secure(
+      tcp,
+      host: uri.host,
+      supportedProtocols: const ['http/1.1'],
+    );
+    final reqBuf = StringBuffer()
+      ..write('GET ${uri.path}${uri.hasQuery ? "?${uri.query}" : ""} HTTP/1.1\r\n')
+      ..write('Host: ${uri.host}\r\n')
+      ..write('Connection: close\r\n')
+      ..write('User-Agent: opa-macht-auge\r\n');
+    for (final h in headers.entries) {
+      reqBuf.write('${h.key}: ${h.value}\r\n');
+    }
+    reqBuf.write('\r\n');
+    tls.add(utf8.encode(reqBuf.toString()));
+    await tls.flush();
+    // Single-subscription stream → ein einziger Consumer mit Phase-Machine.
+    // Phase 1 (header): bytes akkumulieren bis \r\n\r\n.
+    // Phase 2 (body): an outFile streamen, Progress emitten.
+    final headerBytes = <int>[];
+    var headerEnd = -1;
+    IOSink? sink;
+    var received = 0;
+    int contentLength = -1;
+    int statusCode = 0;
+    String? locationHeader;
+    var redirected = false;
+    try {
+      await for (final chunk in tls) {
+        if (headerEnd < 0) {
+          headerBytes.addAll(chunk);
+          for (var i = 3; i < headerBytes.length; i++) {
+            if (headerBytes[i - 3] == 13 &&
+                headerBytes[i - 2] == 10 &&
+                headerBytes[i - 1] == 13 &&
+                headerBytes[i] == 10) {
+              headerEnd = i + 1;
+              break;
+            }
+          }
+          if (headerEnd < 0) continue;
+          // Parsen
+          final headerOnly = headerBytes.sublist(0, headerEnd - 4);
+          final bodyStart = headerBytes.sublist(headerEnd);
+          final headerText =
+              utf8.decode(headerOnly, allowMalformed: true);
+          final lines = headerText.split('\r\n');
+          final firstLine = lines.first;
+          final parts = firstLine.split(' ');
+          statusCode =
+              parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+          for (final line in lines.skip(1)) {
+            final colon = line.indexOf(':');
+            if (colon < 0) continue;
+            final key = line.substring(0, colon).trim().toLowerCase();
+            final val = line.substring(colon + 1).trim();
+            if (key == 'location') locationHeader = val;
+            if (key == 'content-length') {
+              contentLength = int.tryParse(val) ?? -1;
+            }
+          }
+          // ignore: avoid_print
+          print('[AppUpdater] download status=$statusCode len=$contentLength');
+          if (statusCode >= 300 && statusCode < 400 && locationHeader != null) {
+            redirected = true;
+            break; // closes stream below; recurse outside
+          }
+          if (statusCode != 200) {
+            throw HttpException(
+              'Download fehlgeschlagen: HTTP $statusCode',
+              uri: uri,
+            );
+          }
+          // Body-Phase initialisieren
+          sink = outFile.openWrite();
+          if (bodyStart.isNotEmpty) {
+            sink.add(bodyStart);
+            received += bodyStart.length;
+            if (contentLength > 0) {
+              yield (received / contentLength).clamp(0.0, 1.0);
+            }
+          }
+        } else {
+          // Body-Phase
+          sink!.add(chunk);
+          received += chunk.length;
+          if (contentLength > 0) {
+            yield (received / contentLength).clamp(0.0, 1.0);
+          }
+        }
+      }
+    } finally {
+      if (sink != null) {
+        await sink.flush();
+        await sink.close();
+      }
+      try {
+        await tls.close();
+      } catch (_) {}
+    }
+    if (redirected) {
+      if (redirectsLeft <= 0) {
+        throw const SocketException('Zu viele Redirects');
+      }
+      final nextUri = Uri.parse(locationHeader!);
+      // Bei Cross-Origin-Redirect (z.B. zu objects.githubusercontent.com)
+      // Auth-Header weg, denn S3-URL hat signed Token im Query.
+      final nextHeaders = nextUri.host == uri.host
+          ? headers
+          : <String, String>{'Accept': '*/*'};
+      yield* _downloadStreamed(
+        nextUri,
+        nextHeaders,
+        outFile,
+        redirectsLeft: redirectsLeft - 1,
+      );
+      return;
+    }
+    if (headerEnd < 0) {
+      throw const SocketException('Antwort vor Headern abgebrochen');
+    }
+    yield 1.0;
+  }
+
+  /// Best-effort dechunking fuer Transfer-Encoding: chunked
+  static String _dechunk(String body) {
+    final sb = StringBuffer();
+    var i = 0;
+    while (i < body.length) {
+      final lineEnd = body.indexOf('\r\n', i);
+      if (lineEnd < 0) break;
+      final sizeHex = body.substring(i, lineEnd).split(';').first.trim();
+      final size = int.tryParse(sizeHex, radix: 16);
+      if (size == null || size == 0) break;
+      final chunkStart = lineEnd + 2;
+      if (chunkStart + size > body.length) break;
+      sb.write(body.substring(chunkStart, chunkStart + size));
+      i = chunkStart + size + 2;
+    }
+    return sb.toString();
   }
 
   /// Semver-Vergleich (Major.Minor.Patch), Nicht-Numerisches faellt auf 0 zurueck.
@@ -268,25 +475,6 @@ class AppUpdater {
       int.tryParse(parts.elementAtOrNull(1) ?? '0') ?? 0,
       int.tryParse(parts.elementAtOrNull(2) ?? '0') ?? 0,
     ];
-  }
-}
-
-class _ProgressBus {
-  double _last = 0;
-  bool _done = false;
-
-  void emit(double p) {
-    if (p > _last) _last = p;
-  }
-
-  Stream<double> stream(Future<dynamic> until) async* {
-    while (!_done) {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      yield _last;
-      if (_last >= 1.0) break;
-    }
-    await until;
-    _done = true;
   }
 }
 

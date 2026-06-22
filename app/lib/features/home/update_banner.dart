@@ -23,9 +23,35 @@ class _UpdateBannerState extends ConsumerState<UpdateBanner> {
     final asyncStatus = ref.watch(updateCheckProvider);
 
     return asyncStatus.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
+      loading: () => _DiagnosticBanner(
+        color: theme.colorScheme.surfaceContainerHighest,
+        textColor: theme.colorScheme.onSurface,
+        text: 'Update-Check laeuft...',
+        onDismiss: () => setState(() => _dismissed = true),
+      ),
+      error: (err, __) => _DiagnosticBanner(
+        color: theme.colorScheme.errorContainer,
+        textColor: theme.colorScheme.onErrorContainer,
+        text: 'Update-Check fehlgeschlagen: $err',
+        onDismiss: () => setState(() => _dismissed = true),
+      ),
       data: (status) {
+        if (status is UpdateStatusError) {
+          return _DiagnosticBanner(
+            color: theme.colorScheme.errorContainer,
+            textColor: theme.colorScheme.onErrorContainer,
+            text: 'Updater: ${status.message}',
+            onDismiss: () => setState(() => _dismissed = true),
+          );
+        }
+        if (status is UpdateStatusUpToDate) {
+          return _DiagnosticBanner(
+            color: theme.colorScheme.surfaceContainerHighest,
+            textColor: theme.colorScheme.onSurface,
+            text: 'App aktuell (v${status.currentVersion})',
+            onDismiss: () => setState(() => _dismissed = true),
+          );
+        }
         if (status is! UpdateStatusAvailable) return const SizedBox.shrink();
         final dl = _download;
         return Container(
@@ -134,6 +160,46 @@ class _UpdateBannerState extends ConsumerState<UpdateBanner> {
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Schliessen'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiagnosticBanner extends StatelessWidget {
+  const _DiagnosticBanner({
+    required this.color,
+    required this.textColor,
+    required this.text,
+    required this.onDismiss,
+  });
+
+  final Color color;
+  final Color textColor;
+  final String text;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: color,
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, color: textColor, size: 18),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: textColor, fontSize: 13),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            color: textColor,
+            onPressed: onDismiss,
           ),
         ],
       ),

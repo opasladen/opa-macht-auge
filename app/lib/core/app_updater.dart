@@ -83,14 +83,19 @@ class AppUpdater {
 
   /// Pollt `/releases/latest` und vergleicht Versionen.
   Future<UpdateStatus> check() async {
+    // ignore: avoid_print
+    print('[AppUpdater] check() start, tokenLen=${_kGithubToken.length}');
     if (!isEnabled) {
-      _log.d('AppUpdater: kein Token, Check uebersprungen.');
-      return const UpdateStatusUnknown();
+      // ignore: avoid_print
+      print('[AppUpdater] DISABLED: kein GITHUB_RELEASE_TOKEN im Build.');
+      return const UpdateStatusError('Kein Update-Token im Build');
     }
     try {
       final info = await PackageInfo.fromPlatform();
       final currentVersion = info.version;
       final url = '$_apiBase/repos/$_kRepoOwner/$_kRepoName/releases/latest';
+      // ignore: avoid_print
+      print('[AppUpdater] GET $url current=$currentVersion');
       final resp = await _dio.get<Map<String, dynamic>>(
         url,
         options: Options(
@@ -99,8 +104,17 @@ class AppUpdater {
           validateStatus: (s) => s != null && s < 500,
         ),
       );
+      // ignore: avoid_print
+      print('[AppUpdater] HTTP ${resp.statusCode}');
+      if (resp.statusCode == 401 || resp.statusCode == 403) {
+        return UpdateStatusError(
+          'Token abgelehnt (HTTP ${resp.statusCode})',
+        );
+      }
       if (resp.statusCode == 404) {
-        return UpdateStatusUpToDate(currentVersion);
+        return UpdateStatusError(
+          'Kein Release gefunden (HTTP 404, Token-Scope?)',
+        );
       }
       if (resp.statusCode != 200 || resp.data == null) {
         return UpdateStatusError(
@@ -110,6 +124,8 @@ class AppUpdater {
       final data = resp.data!;
       final tag = (data['tag_name'] as String?) ?? '';
       final latestVersion = tag.startsWith('v') ? tag.substring(1) : tag;
+      // ignore: avoid_print
+      print('[AppUpdater] latest=$latestVersion current=$currentVersion');
       final body = (data['body'] as String?) ?? '';
       final assets = (data['assets'] as List<dynamic>? ?? []);
       // Bevorzugt: arm64-v8a-APK (moderne Geraete), Fallback erste APK.
@@ -143,9 +159,13 @@ class AppUpdater {
         assetSize: (asset['size'] as num).toInt(),
       );
     } on DioException catch (e) {
+      // ignore: avoid_print
+      print('[AppUpdater] DioException: ${e.message}');
       _log.e('AppUpdater check failed: ${e.message}');
       return UpdateStatusError(e.message ?? 'Netzwerkfehler');
     } catch (e, st) {
+      // ignore: avoid_print
+      print('[AppUpdater] Exception: $e');
       _log.e('AppUpdater check failed', error: e, stackTrace: st);
       return UpdateStatusError(e.toString());
     }

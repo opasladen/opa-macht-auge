@@ -18,6 +18,9 @@ desktop.ini
 .env.*.local
 *.pem
 *.key
+# Android-Signierung
+*.jks
+app/android/key.properties
 
 # Python
 __pycache__/

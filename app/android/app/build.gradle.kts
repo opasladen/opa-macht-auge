@@ -4,6 +4,19 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
+// Release-Signing: liest key.properties (lokal nicht eingecheckt) oder Env-Vars
+// (im CI via Secrets gesetzt). Fehlen die Daten, wird mit Debug-Key signiert
+// damit lokale Builds nicht brechen - OTA-Updates funktionieren dann aber
+// nur, wenn jeweils der gleiche Keystore verwendet wird.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "de.opaauge.opa_macht_auge"
     compileSdk = flutter.compileSdkVersion
@@ -25,11 +38,28 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFileProp = keystoreProperties.getProperty("storeFile")
+            if (storeFileProp != null) {
+                // Pfad ist relativ zum android/-Root (key.properties liegt dort).
+                storeFile = rootProject.file(storeFileProp)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Wenn key.properties vorhanden ist: Release-Keystore verwenden
+            // (CI + Maintainer-Builds). Sonst Debug-Keystore als Fallback.
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

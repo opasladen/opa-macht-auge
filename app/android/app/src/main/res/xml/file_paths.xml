@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- App-Cache: dort speichert open_filex / AppUpdater die heruntergeladene APK. -->
+    <cache-path name="apk_cache" path="updates/" />
+    <files-path name="apk_files" path="updates/" />
+</paths>

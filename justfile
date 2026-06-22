@@ -74,6 +74,27 @@ app-build-release-android:
 app-test:
     cd app; flutter test
 
+# --- Release ---------------------------------------------------------------
+
+# Neuen Release ausloesen: setzt pubspec.yaml-Version, committet, taggt, pusht.
+# Das pusht den Tag => GitHub Action baut + released die APK automatisch.
+# Verwendung: `just release 0.1.1`
+release version:
+    @Write-Host "Release v{{version}} wird vorbereitet..." -ForegroundColor Cyan
+    cd app; (Get-Content pubspec.yaml) -replace '^version:\s*.+$', 'version: {{version}}+0' | Set-Content pubspec.yaml
+    git add app/pubspec.yaml
+    git commit -m "chore(release): v{{version}}"
+    git tag -a "v{{version}}" -m "Release v{{version}}"
+    git push origin main
+    git push origin "v{{version}}"
+    @Write-Host "Tag v{{version}} gepusht. GitHub Actions buildet jetzt: https://github.com/opasladen/opa-macht-auge/actions" -ForegroundColor Green
+
+# Aktuelle App-Version anzeigen
+release-status:
+    @Select-String -Path app/pubspec.yaml -Pattern '^version:'
+    @Write-Host "Letzte Tags:"
+    git tag --sort=-version:refname | Select-Object -First 5
+
 # --- OpenAPI ---------------------------------------------------------------
 
 openapi-lint:

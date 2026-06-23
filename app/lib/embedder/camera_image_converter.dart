@@ -279,10 +279,12 @@ img.Image yuvToRgbDownscaled(
   final dstW = (viewW * scale).round();
   final dstH = (viewH * scale).round();
 
-  // numChannels: 3 erzwingen. Default ist 4 (RGBA) und kann auf
-  // bestimmten Pixel-Format-Pfaden eine unmodifiable Palette-Buffer-View
-  // liefern -> setPixelRgb wirft 'Cannot modify an unmodifiable list'.
-  final out = img.Image(width: dstW, height: dstH, numChannels: 3);
+  // Eigener Uint8List-Buffer + Image.fromBytes statt Image(...).setPixelRgb.
+  // In image 4.9.1 ist setPixelRgb auf Image(numChannels:3) intermittierend
+  // an einer unmodifiable Pixel-Iterator-View gescheitert
+  // ("Cannot modify an unmodifiable list"). Mit eigenem Buffer ist der
+  // Schreibpfad ein einfacher Uint8List-Index, garantiert mutierbar.
+  final buf = Uint8List(dstW * dstH * 3);
   final invScale = 1.0 / scale;
 
   for (var dy = 0; dy < dstH; dy++) {
@@ -326,8 +328,18 @@ img.Image yuvToRgbDownscaled(
       if (g < 0) g = 0; else if (g > 255) g = 255;
       if (b < 0) b = 0; else if (b > 255) b = 255;
 
-      out.setPixelRgb(dx, dy, r, g, b);
+      final outIdx = (dy * dstW + dx) * 3;
+      buf[outIdx] = r;
+      buf[outIdx + 1] = g;
+      buf[outIdx + 2] = b;
     }
   }
-  return out;
+  return img.Image.fromBytes(
+    width: dstW,
+    height: dstH,
+    bytes: buf.buffer,
+    numChannels: 3,
+    format: img.Format.uint8,
+    order: img.ChannelOrder.rgb,
+  );
 }

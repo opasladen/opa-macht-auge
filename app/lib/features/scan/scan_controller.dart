@@ -235,9 +235,9 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
       }
       // ignore: avoid_print
       print('[Scan] Detector: keine Karte gefunden, fallback fixer ROI');
-    } catch (e) {
+    } catch (e, st) {
       // ignore: avoid_print
-      print('[Scan] Detector-Fehler, fallback fixer ROI: $e');
+      print('[Scan] Detector-Fehler, fallback fixer ROI: $e\n$st');
     }
     return _cropToCardRoi(image);
   }
@@ -334,9 +334,9 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
             '(conv=${convMs.toStringAsFixed(0)}ms det=${detectMs.toStringAsFixed(0)}ms)',
           );
         }
-      } catch (e) {
+      } catch (e, st) {
         // ignore: avoid_print
-        print('[Scan] Detector-Fehler, fallback fixer ROI: $e');
+        print('[Scan] Detector-Fehler, fallback fixer ROI: $e\n$st');
       }
 
       final Float32List embedding;

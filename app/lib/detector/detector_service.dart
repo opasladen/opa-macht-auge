@@ -369,7 +369,12 @@ img.Image _affineWarp(
   final tX = tl.dx;
   final tY = tl.dy;
 
-  final out = img.Image(width: targetW, height: targetH, numChannels: 3);
+  // Eigener Uint8List-Buffer + Image.fromBytes: in image 4.9.1 liefert
+  // der Image(numChannels:3)-Konstruktor in Kombination mit setPixelRgb
+  // unter bestimmten Bedingungen eine unmodifiable Pixel-Iterator-View
+  // ("Cannot modify an unmodifiable list"). Mit einem selbst allozierten
+  // Buffer ist der Schreibpfad garantiert mutierbar.
+  final buf = Uint8List(targetW * targetH * 3);
   final srcW = src.width;
   final srcH = src.height;
 
@@ -382,9 +387,10 @@ img.Image _affineWarp(
       final y0 = sy.floor();
       final x1 = x0 + 1;
       final y1 = y0 + 1;
+      final outIdx = (v * targetW + u) * 3;
 
       if (x0 < 0 || y0 < 0 || x1 >= srcW || y1 >= srcH) {
-        out.setPixelRgb(u, v, 0, 0, 0);
+        // schwarz (Buffer ist bereits 0-initialisiert)
         continue;
       }
 
@@ -404,10 +410,19 @@ img.Image _affineWarp(
       final g = (p00.g * w00 + p10.g * w10 + p01.g * w01 + p11.g * w11).round();
       final b = (p00.b * w00 + p10.b * w10 + p01.b * w01 + p11.b * w11).round();
 
-      out.setPixelRgb(u, v, r, g, b);
+      buf[outIdx] = r < 0 ? 0 : (r > 255 ? 255 : r);
+      buf[outIdx + 1] = g < 0 ? 0 : (g > 255 ? 255 : g);
+      buf[outIdx + 2] = b < 0 ? 0 : (b > 255 ? 255 : b);
     }
   }
-  return out;
+  return img.Image.fromBytes(
+    width: targetW,
+    height: targetH,
+    bytes: buf.buffer,
+    numChannels: 3,
+    format: img.Format.uint8,
+    order: img.ChannelOrder.rgb,
+  );
 }
 
 // ---------------------------------------------------------------------------

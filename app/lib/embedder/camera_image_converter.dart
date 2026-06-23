@@ -17,6 +17,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
 
 import 'preprocess.dart';
 
@@ -225,4 +226,105 @@ double _ySharpness(Uint8List y, int w, int h, int rowStride) {
   if (count == 0) return 0;
   final mean = sum / count;
   return (sumSq / count) - mean * mean;
+}
+
+/// Konvertiert einen ``CameraImage`` (YUV_420_888) in ein ``img.Image``
+/// (RGB), heruntergerechnet auf eine Ziel-Laengkante (typ. 640 fuer den
+/// YOLO-Detector). Wendet die Sensor-Rotation an, damit das resultierende
+/// Bild bereits in Display-Orientierung steht.
+///
+/// Nearest-Neighbour-Sampling. Auf einem Pixel 8 Pro fuer 1280x720 ->
+/// 640x360 typisch ~10-20 ms. Bewusst kein bilinear: YOLOv11n-OBB ist
+/// robust gegen leichte Aliasing-Artefakte und wir wollen die zusaetzliche
+/// Latenz minimieren.
+img.Image yuvToRgbDownscaled(
+  CameraImage image, {
+  int targetLongEdge = 640,
+  int sensorOrientation = 90,
+}) {
+  if (image.format.group != ImageFormatGroup.yuv420) {
+    throw ArgumentError(
+      'yuvToRgbDownscaled erwartet YUV_420_888, bekam ${image.format.group}',
+    );
+  }
+  if (image.planes.length < 3) {
+    throw ArgumentError(
+      'YUV-Frame muss 3 Planes haben, hat ${image.planes.length}',
+    );
+  }
+
+  final yPlane = image.planes[0];
+  final uPlane = image.planes[1];
+  final vPlane = image.planes[2];
+  final yBytes = yPlane.bytes;
+  final uBytes = uPlane.bytes;
+  final vBytes = vPlane.bytes;
+  final yRowStride = yPlane.bytesPerRow;
+  final uRowStride = uPlane.bytesPerRow;
+  final vRowStride = vPlane.bytesPerRow;
+  final uPixelStride = uPlane.bytesPerPixel ?? 1;
+  final vPixelStride = vPlane.bytesPerPixel ?? 1;
+
+  final imageW = image.width;
+  final imageH = image.height;
+
+  // Display-Koordinaten nach Rotation.
+  final rotated = sensorOrientation == 90 || sensorOrientation == 270;
+  final viewW = rotated ? imageH : imageW;
+  final viewH = rotated ? imageW : imageH;
+
+  // Aspect-erhaltender Downscale auf targetLongEdge.
+  final longEdge = viewW > viewH ? viewW : viewH;
+  final scale = longEdge > targetLongEdge ? targetLongEdge / longEdge : 1.0;
+  final dstW = (viewW * scale).round();
+  final dstH = (viewH * scale).round();
+
+  final out = img.Image(width: dstW, height: dstH);
+  final invScale = 1.0 / scale;
+
+  for (var dy = 0; dy < dstH; dy++) {
+    final syView = (dy * invScale).toInt();
+    for (var dx = 0; dx < dstW; dx++) {
+      final sxView = (dx * invScale).toInt();
+
+      // Mapping View -> Sensor je nach Rotation.
+      final int srcX;
+      final int srcY;
+      switch (sensorOrientation) {
+        case 90:
+          srcX = syView;
+          srcY = imageH - 1 - sxView;
+          break;
+        case 270:
+          srcX = imageW - 1 - syView;
+          srcY = sxView;
+          break;
+        case 180:
+          srcX = imageW - 1 - sxView;
+          srcY = imageH - 1 - syView;
+          break;
+        default:
+          srcX = sxView;
+          srcY = syView;
+      }
+
+      final yi = yBytes[srcY * yRowStride + srcX] & 0xff;
+      final uvY = srcY >> 1;
+      final uvX = srcX >> 1;
+      final u = uBytes[uvY * uRowStride + uvX * uPixelStride] & 0xff;
+      final v = vBytes[uvY * vRowStride + uvX * vPixelStride] & 0xff;
+
+      final cb = u - 128;
+      final cr = v - 128;
+      var r = (yi + 1.402 * cr).round();
+      var g = (yi - 0.344136 * cb - 0.714136 * cr).round();
+      var b = (yi + 1.772 * cb).round();
+      if (r < 0) r = 0; else if (r > 255) r = 255;
+      if (g < 0) g = 0; else if (g > 255) g = 255;
+      if (b < 0) b = 0; else if (b > 255) b = 255;
+
+      out.setPixelRgb(dx, dy, r, g, b);
+    }
+  }
+  return out;
 }

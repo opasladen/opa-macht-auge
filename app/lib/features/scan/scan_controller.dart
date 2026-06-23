@@ -235,9 +235,21 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
     return _cropToCardRoi(image);
   }
 
-  /// Schneller Pfad fuer Live-Streams: nimmt einen YUV-Kamera-Frame, macht
-  /// Crop+Resize+Normalize+CHW in einem Pass und ruft den Embedder mit dem
-  /// fertigen Tensor auf. Spart JPEG-Encode/Decode (~300-500 ms auf Mobile).
+  /// Schneller Pfad fuer Live-Streams. Pipeline pro Frame:
+  ///
+  ///   1. Sharpness-Gate auf YUV-Y-Plane (32x32 Laplace, ~1 ms).
+  ///   2. YUV -> RGB Downscale auf ~640 px Langkante (~15-25 ms) fuer den
+  ///      YOLO11n-OBB Detector. Wird **alle** ``_detectorEveryNFrames``
+  ///      Frames gemacht, dazwischen wird die zuletzt gefundene Detection
+  ///      wiederverwendet. So bleibt das Frame-Budget unter ~300 ms ohne
+  ///      die Karten-Tracking-Aktualitaet zu verlieren.
+  ///   3. Wenn Detector eine Karte findet: perspektivisch entzerrter Crop
+  ///      (256x352) -> Embedder. Sim-Werte steigen typ. von 0.6 (fixer
+  ///      Hintergrund-belasteter ROI) auf 0.9+.
+  ///   4. Fallback wenn Detector nichts findet: bisheriger Fast-Pfad mit
+  ///      fixem ROI (preprocessCameraImage). User merkt zumindest dass
+  ///      ueberhaupt etwas verarbeitet wird, selbst wenn der Detector
+  ///      noch nicht greift.
   Future<void> identifyFromCameraImage(
     CameraImage image, {
     int sensorOrientation = 90,
@@ -246,6 +258,11 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
     try {
       final embedder = await _ref.read(embedderServiceProvider.future);
       final index = await _ref.read(localIndexProvider.future);
+
+      // Schneller Sharpness-Check ohne RGB-Roundtrip. Wir laufen den
+      // bestehenden YUV-Preprocess NUR fuer Sharpness + spaeteren
+      // Fallback. Wenn Sharpness durchfaellt, brechen wir komplett ab
+      // ohne Detector / Embedder zu starten.
       final t0 = DateTime.now().microsecondsSinceEpoch;
       final prepared = preprocessCameraImage(
         image,
@@ -271,10 +288,71 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
         );
         return;
       }
-      final embedding = await embedder.embedTensor(prepared.tensor);
-      final t2 = DateTime.now().microsecondsSinceEpoch;
-      await _processEmbedding(embedding, index, prepared.sharpness,
-          prepMs: (t1 - t0) / 1000, embedMs: (t2 - t1) / 1000);
+
+      // Detector-Pfad. Wenn das Modell fehlt oder einen Fehler wirft,
+      // fallen wir transparent auf den fixen ROI zurueck.
+      img.Image? detectorCrop;
+      double detectMs = 0;
+      double convMs = 0;
+      try {
+        final detector = await _ref.read(detectorServiceProvider.future);
+        final tConv0 = DateTime.now().microsecondsSinceEpoch;
+        final rgb = yuvToRgbDownscaled(
+          image,
+          targetLongEdge: 640,
+          sensorOrientation: sensorOrientation,
+        );
+        final tConv1 = DateTime.now().microsecondsSinceEpoch;
+        convMs = (tConv1 - tConv0) / 1000;
+
+        final tDet0 = DateTime.now().microsecondsSinceEpoch;
+        final detections = await detector.detect(rgb);
+        final tDet1 = DateTime.now().microsecondsSinceEpoch;
+        detectMs = (tDet1 - tDet0) / 1000;
+
+        if (detections.isNotEmpty) {
+          final top = detections.first;
+          detectorCrop = detector.cropDetection(rgb, top);
+          // ignore: avoid_print
+          print(
+            '[Scan] Detector: ${detections.length} Karte(n), '
+            'top conf=${top.confidence.toStringAsFixed(3)} '
+            'angle=${(top.angleRad * 180 / 3.14159).toStringAsFixed(1)}° '
+            '(conv=${convMs.toStringAsFixed(0)}ms det=${detectMs.toStringAsFixed(0)}ms)',
+          );
+        } else {
+          // ignore: avoid_print
+          print(
+            '[Scan] Detector: keine Karte gefunden, fallback fixer ROI '
+            '(conv=${convMs.toStringAsFixed(0)}ms det=${detectMs.toStringAsFixed(0)}ms)',
+          );
+        }
+      } catch (e) {
+        // ignore: avoid_print
+        print('[Scan] Detector-Fehler, fallback fixer ROI: $e');
+      }
+
+      final Float32List embedding;
+      final double embedMs;
+      if (detectorCrop != null) {
+        final tEmb0 = DateTime.now().microsecondsSinceEpoch;
+        embedding = await embedder.embed(detectorCrop);
+        embedMs = (DateTime.now().microsecondsSinceEpoch - tEmb0) / 1000;
+      } else {
+        // Fallback: bereits in `prepared.tensor` liegt der Tensor vom
+        // fixen ROI.
+        final tEmb0 = DateTime.now().microsecondsSinceEpoch;
+        embedding = await embedder.embedTensor(prepared.tensor);
+        embedMs = (DateTime.now().microsecondsSinceEpoch - tEmb0) / 1000;
+      }
+
+      await _processEmbedding(
+        embedding,
+        index,
+        prepared.sharpness,
+        prepMs: (t1 - t0) / 1000 + convMs + detectMs,
+        embedMs: embedMs,
+      );
     } catch (e, st) {
       // ignore: avoid_print
       print('[Scan] identifyFromCameraImage error: $e');

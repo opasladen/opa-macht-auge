@@ -13,23 +13,35 @@ class SoundService {
   SoundService() : _player = AudioPlayer() {
     _player.setReleaseMode(ReleaseMode.stop);
     // Player-Modus = LowLatency damit fixe kurze SFX nicht buffern.
-    _player.setPlayerMode(PlayerMode.lowLatency);
-    // Quelle vorab laden, damit der erste Scan keine Decode-Latenz hat.
     // ignore: discarded_futures
-    _player.setSource(AssetSource('sounds/scan_success.mp3')).catchError((_) {});
+    _player.setPlayerMode(PlayerMode.lowLatency).then((_) {
+      // ignore: avoid_print
+      print('[SoundService] PlayerMode.lowLatency aktiv');
+    }).catchError((Object e) {
+      // ignore: avoid_print
+      print('[SoundService] setPlayerMode failed: $e');
+    });
+    // KEIN setSource hier - das hat auf einigen Geraeten in v0.1.9 den
+    // Player in einen halboffenen Zustand gebracht, sodass play() spaeter
+    // still scheiterte. Wir laden die Quelle nun nur per play() bei
+    // Bedarf - audioplayers cached den Asset intern.
   }
 
   final AudioPlayer _player;
 
   /// Spielt den Success-Sound. Wird beim ersten Confirmed-Hit pro Karte
-  /// aufgerufen. Fehler werden bewusst geschluckt – ein fehlender
-  /// Audio-Output darf die Scan-Pipeline nicht blockieren.
+  /// aufgerufen. Fehler werden geloggt aber nicht eskaliert - ein
+  /// fehlender Audio-Output darf die Scan-Pipeline nicht blockieren.
   Future<void> playSuccess() async {
     try {
       await _player.stop();
+      await _player.setVolume(1.0);
       await _player.play(AssetSource('sounds/scan_success.mp3'));
-    } catch (_) {
-      // best effort
+      // ignore: avoid_print
+      print('[SoundService] play() OK');
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[SoundService] play() FAILED: $e\n$st');
     }
   }
 

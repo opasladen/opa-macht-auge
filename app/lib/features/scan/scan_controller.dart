@@ -41,8 +41,8 @@ class ScanThresholds {
     this.confirmSimilarity = 0.72,
     this.stableFrames = 2,
     this.sharpnessMin = 60.0,
-    this.marginMin = 0.04,
-    this.clearFrames = 4,
+    this.marginMin = 0.08,
+    this.clearFrames = 10,
   });
 
   /// Unter dieser Cosine-Similarity wird der Top-1 verworfen (kein Match).
@@ -81,6 +81,7 @@ class ScanResult {
     required this.confirmed,
     required this.topSimilarity,
     required this.sharpness,
+    this.detectionPolygon,
   });
 
   /// Hydratisierte Top-K-Treffer mit Backend-Metadaten.
@@ -98,6 +99,12 @@ class ScanResult {
 
   /// Berechnete Schaerfe des verarbeiteten ROIs (Debug/Telemetry).
   final double sharpness;
+
+  /// 4 Eckpunkte des zuletzt vom Detector gefundenen Karten-Polygons,
+  /// normalisiert auf [0..1] x [0..1] im Display-Koordinatensystem.
+  /// ``null`` solange noch nichts gefunden wurde. Wird vom Overlay
+  /// gerendert damit der User sieht wo die KI die Karte erkannt hat.
+  final List<Offset>? detectionPolygon;
 
   bool get hasMatches => matches.isNotEmpty;
 }

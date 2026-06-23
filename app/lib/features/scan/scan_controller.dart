@@ -41,6 +41,8 @@ class ScanThresholds {
     this.confirmSimilarity = 0.72,
     this.stableFrames = 2,
     this.sharpnessMin = 60.0,
+    this.marginMin = 0.04,
+    this.clearFrames = 4,
   });
 
   /// Unter dieser Cosine-Similarity wird der Top-1 verworfen (kein Match).
@@ -56,6 +58,20 @@ class ScanThresholds {
 
   /// Mindest-Laplace-Varianz im ROI – Frames darunter sind zu verschwommen.
   final double sharpnessMin;
+
+  /// Mindest-Abstand zwischen Top-1 und Top-2 Cosine-Similarity. Liegen
+  /// beide zu dicht zusammen (typisch: dieselbe Karte in DE/EN/JP), wird
+  /// das Ergebnis als "uneindeutig" verworfen und der User soll die Karte
+  /// nachschaerfen / einen Tick warten. Verhindert Sprach-Flips.
+  final double marginMin;
+
+  /// Wie viele aufeinanderfolgende Frames OHNE valide Karte (kein Match
+  /// >= minSimilarity ODER zu unscharf) verlangt werden, bevor der
+  /// Confirm-Lock geloest wird. Erst danach darf erneut ein Sound /
+  /// History-Eintrag fuer dieselbe ODER eine andere Karte ausgeloest
+  /// werden. Sorgt dafuer dass "Karte stehen lassen" genau einen Scan
+  /// produziert, egal ueber wie viele Frames sie liegt.
+  final int clearFrames;
 }
 
 class ScanResult {
@@ -133,6 +149,20 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
   /// geloescht, sodass die exakt gleiche Karte nach einer Lueck-Phase
   /// erneut beepen darf (= naechster Scan-Versuch).
   String? _lastFeedbackCardId;
+
+  /// True solange seit dem letzten Confirmed-Hit noch keine
+  /// ``clearFrames`` Leer-Frames hintereinander beobachtet wurden. In
+  /// diesem Zustand wird *kein* neuer Confirmed-Hit ausgeloest, egal ob
+  /// die Karte zwischen DE/EN/JP-Treffern flippt oder eine ganz andere
+  /// Karte ins Bild gehalten wird. So bekommt jede physisch eingelegte
+  /// Karte genau einen Sound + History-Eintrag, bis sie aus dem Bild
+  /// genommen wird.
+  bool _awaitingClear = false;
+
+  /// Zaehler aufeinanderfolgender Leer-Frames seit dem letzten
+  /// Confirmed-Hit. Wird in `_processEmbedding` bei sim < minSim oder
+  /// fehlendem Match inkrementiert und bei jedem valid match resettet.
+  int _clearStreak = 0;
 
   /// Laedt eine Datei, dekodiert sie und ruft [identifyFromImage] auf.
   Future<void> identifyFromFile(File file) async {
@@ -265,6 +295,16 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
     if (hits.isEmpty || hits.first.similarity < _thresholds.minSimilarity) {
       _tracker.reset();
       _lastFeedbackCardId = null;
+      // Leer-Frame zaehlt fuer den Clear-Counter. Sobald wir genug
+      // Leer-Frames in Folge gesehen haben, gilt "Karte aus dem Bild" und
+      // der naechste valide Treffer darf wieder einen neuen Confirm
+      // ausloesen.
+      _clearStreak++;
+      if (_awaitingClear && _clearStreak >= _thresholds.clearFrames) {
+        _awaitingClear = false;
+        // ignore: avoid_print
+        print('[Scan] cleared after $_clearStreak empty frames - ready for next scan');
+      }
       // ignore: avoid_print
       print(
         '[Scan] reject sim=${hits.isEmpty ? 0 : hits.first.similarity.toStringAsFixed(3)} '
@@ -283,7 +323,13 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
       return;
     }
 
+    // Ab hier haben wir mindestens einen validen Top-1. Clear-Counter
+    // wird zurueckgesetzt, weil die Karte (noch oder wieder) im Bild ist.
+    _clearStreak = 0;
+
     final top = hits.first;
+    final runnerUp = hits.length > 1 ? hits[1] : null;
+    final margin = runnerUp == null ? 1.0 : top.similarity - runnerUp.similarity;
 
     // Lock-Modus: wenn wir gerade eine confirmed-Karte zeigen und der
     // Embedder weiterhin dieselbe Karte als Top-1 sieht, dann nichts tun.
@@ -306,8 +352,19 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
     }
 
     final isStable = _tracker.observe(top.cardId);
-    final isConfirmed =
-        isStable && top.similarity >= _thresholds.confirmSimilarity;
+    final hasMargin = margin >= _thresholds.marginMin;
+    // Confirm verlangt jetzt 3 Dinge:
+    //   * stabile cardId ueber stableFrames
+    //   * Top-1 >= confirmSimilarity
+    //   * deutlicher Abstand zu Top-2 (sonst koennte es genauso die
+    //     andere Sprach-Variante derselben Karte sein)
+    //   * UND: wir warten nicht gerade auf einen Clear nach dem letzten
+    //     Confirm. Sonst wuerde der User "Karte halten" zu "alle 2 s ein
+    //     neuer Scan derselben Karte in zufaelliger Sprache" werden.
+    final isConfirmed = isStable &&
+        top.similarity >= _thresholds.confirmSimilarity &&
+        hasMargin &&
+        !_awaitingClear;
 
     // Backend-Hydration nur wenn wir wirklich etwas zeigen. Bei jedem
     // Frame ein Lookup-Call waere unnoetig Traffic und Server-Load.
@@ -316,8 +373,10 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
     // ignore: avoid_print
     print(
       '[Scan] top=${top.cardId} sim=${top.similarity.toStringAsFixed(3)} '
+      'margin=${margin.toStringAsFixed(3)} '
       'sharp=${sharpness.toStringAsFixed(0)} stable=$isStable '
       'confirmed=$isConfirmed '
+      '${_awaitingClear ? "(awaiting clear) " : ""}'
       '(prep=${prepMs.toStringAsFixed(0)}ms embed=${embedMs.toStringAsFixed(0)}ms topK=${topKMs.toStringAsFixed(0)}ms)',
     );
 
@@ -332,6 +391,12 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
       // erneut piepen.
       if (m.cardId != _lastFeedbackCardId) {
         _lastFeedbackCardId = m.cardId;
+        // Ab jetzt warten wir explizit darauf dass die Karte aus dem
+        // Bild verschwindet (`clearFrames` Leer-Frames in Folge), bevor
+        // ueberhaupt der naechste Confirm passieren darf. Verhindert das
+        // "Karte halten = derselbe Scan in 3 Sprachen hintereinander".
+        _awaitingClear = true;
+        _clearStreak = 0;
         // Eigener Asset-Sound (assets/sounds/scan_success.mp3) ueber
         // SoundService. AudioPlayer ist als Singleton vorgeladen, daher
         // keine Decode-Latenz beim ersten Hit. Haptic bleibt parallel
@@ -387,6 +452,8 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
   void reset() {
     _tracker.reset();
     _lastFeedbackCardId = null;
+    _awaitingClear = false;
+    _clearStreak = 0;
     state = const AsyncValue.data(null);
   }
 }

@@ -60,9 +60,13 @@ node_modules/
 # Datasets / Models (ueber DVC getrackt)
 ml/datasets/raw/
 ml/datasets/processed/
+ml/datasets/.card_cache/
+ml/datasets/cards_obb/
+ml/datasets/cards_obb_smoke/
 ml/runs/
 ml/weights/
 ml/data/cardmarket/
+runs/
 *.pt
 *.tflite
 # Nicht ins Repo: INT8-Quantisierung (Mobile-ORT supportet QInt8 nicht),

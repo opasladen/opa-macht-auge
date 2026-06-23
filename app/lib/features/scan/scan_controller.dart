@@ -28,6 +28,7 @@ import '../../data/dto/card_summary_dto.dart';
 import '../../data/dto/identify_dto.dart';
 import '../../data/local/scan_history_entry.dart';
 import '../../data/local/scan_history_store.dart';
+import '../../detector/detector_service.dart';
 import '../../embedder/camera_image_converter.dart';
 import '../../embedder/embedder_service.dart';
 import '../../embedder/local_index.dart';
@@ -150,7 +151,7 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
   Future<void> identifyFromImage(img.Image image) async {
     state = const AsyncValue.loading();
     try {
-      final roi = _cropToCardRoi(image);
+      final roi = await _detectAndCrop(image);
       final sharpness = _laplaceVariance(roi);
       if (sharpness < _thresholds.sharpnessMin) {
         _tracker.reset();
@@ -174,6 +175,33 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
+  }
+
+  /// Versucht zuerst den YOLO11-OBB-Detector. Findet er mindestens eine
+  /// Karte, wird das Top-1-Polygon perspektivisch entzerrt ausgeschnitten.
+  /// Schlaegt der Detector fehl (kein Match, Modell fehlt, ORT-Fehler),
+  /// fallback auf den fixen Cutout-ROI.
+  Future<img.Image> _detectAndCrop(img.Image image) async {
+    try {
+      final detector = await _ref.read(detectorServiceProvider.future);
+      final detections = await detector.detect(image);
+      if (detections.isNotEmpty) {
+        final top = detections.first;
+        // ignore: avoid_print
+        print(
+          '[Scan] Detector: ${detections.length} Karte(n), '
+          'top conf=${top.confidence.toStringAsFixed(3)} '
+          'angle=${(top.angleRad * 180 / 3.14159).toStringAsFixed(1)}°',
+        );
+        return detector.cropDetection(image, top);
+      }
+      // ignore: avoid_print
+      print('[Scan] Detector: keine Karte gefunden, fallback fixer ROI');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Scan] Detector-Fehler, fallback fixer ROI: $e');
+    }
+    return _cropToCardRoi(image);
   }
 
   /// Schneller Pfad fuer Live-Streams: nimmt einen YUV-Kamera-Frame, macht

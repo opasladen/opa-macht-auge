@@ -1,7 +1,7 @@
 name: opa_macht_auge
 description: "Opa macht Auge - Pokemon-Karten erkennen, katalogisieren, bewerten."
 publish_to: none
-version: 0.1.7+8
+version: 0.1.8+9
 
 environment:
   sdk: ">=3.5.0 <4.0.0"

@@ -70,7 +70,12 @@ class AppUpdater {
 
   static const String _apiBase = 'https://api.github.com';
 
-  bool get isEnabled => _kGithubToken.isNotEmpty;
+  /// Der Updater ist immer aktiviert. Wenn das Repo public ist, ist kein
+  /// Token noetig. Wenn das Repo privat ist + Token gesetzt, wird Auth
+  /// mitgeschickt. Ungueltiges Token + public Repo gibt 401 -> hier
+  /// faellt der Updater dann hart, deshalb senden wir Auth nur wenn Token
+  /// auch wirklich gesetzt ist.
+  bool get isEnabled => true;
 
   Map<String, String> get _authHeaders => {
         'Accept': 'application/vnd.github+json',
@@ -82,11 +87,6 @@ class AppUpdater {
   Future<UpdateStatus> check() async {
     // ignore: avoid_print
     print('[AppUpdater] check() start, tokenLen=${_kGithubToken.length}');
-    if (!isEnabled) {
-      // ignore: avoid_print
-      print('[AppUpdater] DISABLED: kein GITHUB_RELEASE_TOKEN im Build.');
-      return const UpdateStatusError('Kein Update-Token im Build');
-    }
     // Workaround: dart:io HttpClient hat auf manchen Android-Geraeten DNS-
     // Probleme beim ersten Call. Vorab explizit aufloesen + bis zu 3x retry.
     String? resolvedIp;
@@ -150,7 +150,8 @@ class AppUpdater {
           'Host: api.github.com',
           'Accept: application/vnd.github+json',
           'X-GitHub-Api-Version: 2022-11-28',
-          'Authorization: Bearer $_kGithubToken',
+          if (_kGithubToken.isNotEmpty)
+            'Authorization: Bearer $_kGithubToken',
           'User-Agent: opa-macht-auge/$_kRepoName',
           'Connection: close',
           '',

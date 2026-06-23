@@ -91,7 +91,8 @@ jobs:
             --split-per-abi \
             --build-name="${{ steps.version.outputs.version }}" \
             --build-number="${{ github.run_number }}" \
-            --dart-define=GITHUB_RELEASE_TOKEN="${{ secrets.GH_RELEASE_READ_TOKEN }}"
+            --dart-define=GITHUB_RELEASE_TOKEN="${{ secrets.GH_RELEASE_READ_TOKEN }}" \
+            --dart-define=BACKEND_BASE_URL="${{ vars.BACKEND_BASE_URL }}"
         working-directory: app
 
       - name: Rename APKs

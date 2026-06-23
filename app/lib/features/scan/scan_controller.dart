@@ -23,6 +23,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 
+import '../../core/sound_service.dart';
 import '../../data/api/cards_api.dart';
 import '../../data/dto/card_summary_dto.dart';
 import '../../data/dto/identify_dto.dart';
@@ -331,10 +332,12 @@ class ScanController extends StateNotifier<AsyncValue<ScanResult?>> {
       // erneut piepen.
       if (m.cardId != _lastFeedbackCardId) {
         _lastFeedbackCardId = m.cardId;
-        // SystemSound nutzt den nativen UI-Click-Sound (Android: Audio-
-        // Manager FX_KEY_CLICK). Kein Asset, kein Permission, kein
-        // zusaetzliches Plugin noetig.
-        SystemSound.play(SystemSoundType.click);
+        // Eigener Asset-Sound (assets/sounds/scan_success.mp3) ueber
+        // SoundService. AudioPlayer ist als Singleton vorgeladen, daher
+        // keine Decode-Latenz beim ersten Hit. Haptic bleibt parallel
+        // fuer taktiles Feedback.
+        // ignore: discarded_futures
+        _ref.read(soundServiceProvider).playSuccess();
         HapticFeedback.mediumImpact();
       }
       final entry = ScanHistoryEntry(

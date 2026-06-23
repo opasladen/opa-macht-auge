@@ -27,9 +27,17 @@ class DetectorService {
   final OrtSession _session;
 
   static const int inputSize = 640;
-  static const double confThreshold = 0.25;
+  // Conf-Threshold hoch: niedrigere Confidences korrelieren mit
+  // falschen Orientierungen oder Hintergrund-Strukturen.
+  static const double confThreshold = 0.50;
   static const double iouThreshold = 0.45;
   static const int maxDetections = 32;
+  // Pokemon-Karte aspect (kurze/lange Seite): 245/337 = 0.727.
+  // Toleranz +/- 0.13 deckt Perspektiv-Verzerrungen ab,
+  // verwirft aber Spielmatten-Stuecke und Stapel-Anschnitte.
+  static const double minAspectRatio = 0.55;
+  static const double maxAspectRatio = 0.90;
+  static const double minSideLengthPx = 60.0;
   static const String modelVersion = 'yolo11n-obb-cards-2026.06';
 
   /// Karten-Aspect (Pokemon): ~245:337 = 0.727. Wir croppen auf 256x352
@@ -122,7 +130,15 @@ class DetectorService {
   }) {
     final tw = targetWidth ?? cropWidth;
     final th = targetHeight ?? cropHeight;
-    return _affineWarp(source, det.polygon, tw, th);
+    // Orientierungs-Korrektur: wenn die Detection breiter als hoch ist
+    // (Karte liegt im Modell-Frame quer), Polygon zyklisch um 1
+    // Position drehen damit die lange Seite immer Crop-Hoehe wird.
+    // Sonst wird die Karte ins Hochformat-Crop verdreht und der
+    // Embedder bekommt eine verzerrte Eingabe.
+    final poly = det.width > det.height
+        ? <Offset>[det.polygon[3], det.polygon[0], det.polygon[1], det.polygon[2]]
+        : det.polygon;
+    return _affineWarp(source, poly, tw, th);
   }
 
   void dispose() {
@@ -268,13 +284,27 @@ List<CardDetection> _decode(
     final originalCx = (cx - padX) / scale;
     final originalCy = (cy - padY) / scale;
 
+    final origW2 = w / scale;
+    final origH2 = h / scale;
+    // Validation: Min-Groesse + plausibler Pokemon-Karten-Aspect.
+    // Schliesst Hintergrund-Detections, Karten-Stuecke und
+    // Multi-Karten-Cluster aus.
+    final shortSide = math.min(origW2, origH2);
+    final longSide = math.max(origW2, origH2);
+    if (shortSide < DetectorService.minSideLengthPx) continue;
+    final aspect = shortSide / longSide;
+    if (aspect < DetectorService.minAspectRatio ||
+        aspect > DetectorService.maxAspectRatio) {
+      continue;
+    }
+
     detections.add(CardDetection(
       polygon: corners,
       confidence: conf,
       angleRad: angle,
       center: Offset(originalCx, originalCy),
-      width: w / scale,
-      height: h / scale,
+      width: origW2,
+      height: origH2,
     ));
   }
   return detections;

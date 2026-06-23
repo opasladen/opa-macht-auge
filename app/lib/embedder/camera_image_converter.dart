@@ -279,7 +279,10 @@ img.Image yuvToRgbDownscaled(
   final dstW = (viewW * scale).round();
   final dstH = (viewH * scale).round();
 
-  final out = img.Image(width: dstW, height: dstH);
+  // numChannels: 3 erzwingen. Default ist 4 (RGBA) und kann auf
+  // bestimmten Pixel-Format-Pfaden eine unmodifiable Palette-Buffer-View
+  // liefern -> setPixelRgb wirft 'Cannot modify an unmodifiable list'.
+  final out = img.Image(width: dstW, height: dstH, numChannels: 3);
   final invScale = 1.0 / scale;
 
   for (var dy = 0; dy < dstH; dy++) {
